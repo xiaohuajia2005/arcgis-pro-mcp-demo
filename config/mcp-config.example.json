@@ -1,0 +1,21 @@
+{
+  "_说明": [
+    "这是通用 MCP 客户端配置样例（Claude Desktop / DeepSeek Harness / Cline 等格式基本一致）。",
+    "使用时把本文件内容合并进客户端的 mcpServers 配置，并把下面两处路径改成你自己的实际路径：",
+    "  1. args 里的 server.mjs 绝对路径",
+    "  2. env.ARCGIS_PRO_PYTHON 里 ArcGIS Pro 自带的 python.exe 路径",
+    "如果 node 已经在系统 PATH 里，command 可以直接写 \"node\"。",
+    "ARCGIS_PRO_PYTHON 也可以不写，server.mjs 会自动探测常见安装位置。"
+  ],
+  "mcpServers": {
+    "arcgis-pro": {
+      "command": "node",
+      "args": [
+        "D:/arcgis-pro-mcp-demo/server.mjs"
+      ],
+      "env": {
+        "ARCGIS_PRO_PYTHON": "C:/Program Files/ArcGIS/Pro/bin/Python/envs/arcgispro-py3/python.exe"
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "arcgis-pro-mcp-demo",
+  "version": "1.0.0",
+  "description": "Local MCP server that lets an LLM agent (DeepSeek) drive ArcGIS Pro through arcpy: read layers, run spatial queries and basic GIS analysis.",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "doctor": "node doctor.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "arcgis-pro",
+    "arcpy",
+    "gis",
+    "llm-agent"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  }
+}

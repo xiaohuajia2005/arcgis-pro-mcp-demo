@@ -1,0 +1,25 @@
+# DeepSeek Harness 接入样例
+#
+# 存放位置：%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml
+# 把下面这段追加到该文件末尾（这是一个 YAML 数组，注意顶层缩进和前面的 `- `）。
+#
+# 要点：
+#   1. command 必须是 node 的绝对路径，Harness 不会去读系统 PATH
+#   2. args 指向 server.mjs 的绝对路径，反斜杠在单引号里不用转义
+#   3. 改完必须重启 Harness 才会加载
+#
+# 为什么这里不用 python 直接起服务：
+#   ArcGIS Pro 3.1 自带的是 Python 3.9，而 MCP 官方 SDK 要求 >= 3.10，
+#   pip 里所有版本的 mcp 都装不进去。所以协议层由 Node 承担，
+#   Python 只作为 arcpy 的执行进程被 Node 拉起。
+
+- insert:
+    - id: "mcp-arcgis-pro"
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: "arcgis-pro"
+        transport: "stdio"
+        # 换成你自己的 node 路径，可用 where node 查看
+        command: 'C:\Program Files\nodejs\node.exe'
+        args:
+          - 'D:\arcgis-pro-mcp-demo\server.mjs'
