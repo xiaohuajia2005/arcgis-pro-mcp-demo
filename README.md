@@ -1,51 +1,84 @@
-# ArcGIS Pro MCP Server — AI Agent + GIS 工具调用验证 Demo
+# ArcGIS Pro Worker Agent — GIS 方向 Super-Agent 的执行层
 
-让大模型（DeepSeek）通过 MCP 协议操作 ArcGIS Pro：读取图层、查询属性、执行空间分析、导出地图。
+GIS 方向的 Super-Agent 负责理解意图、拆解任务、调度多个领域的 Worker；本仓库是其中**GIS 领域的 Worker Agent**：
+接收下发的子任务，把「算一下公路 500 米缓冲」这类指令翻译成具体的 arcpy 调用，
+执行完把结构化结果交回去。
 
-这是一个**能力验证项目**，用来证明「LLM Agent 可以真正驱动桌面 GIS 工具」这条路走得通。
-也是我投递 **AI Builder** 岗位的作品集项目之一，**不是商业产品**，不追求工程完备性。
+技术上它是一个本地 MCP Server（16 个工具），运行在 Windows 上，直接驱动本机已授权的 ArcGIS Pro。
+**不是独立的对话机器人，也不做全局规划**——它的价值在于把 GIS 领域的前置判断做对。
 
 ---
 
 ## 项目介绍
 
-ArcGIS Pro 的 `arcpy` 能力很完整，但只能由人手动调用；大模型会推理会规划，却碰不到桌面软件。
+### 为什么要拆出 Worker
 
-这个 Demo 做的就是把两边接起来：
+GIS 方向的 Super-Agent 要处理的需求往往跨环节：先看数据、判断坐标系、做投影、跑分析、再出图。
+如果把这些都塞进一个 Agent 的上下文里，会同时出现两个问题：
 
-- 用 **MCP（Model Context Protocol）** 把 `arcpy` 的能力暴露成一组工具
-- 大模型自己判断该调哪个工具、按什么顺序调、传什么参数
-- 结果实时返回给模型，由它决定下一步
+1. **上下文被工具细节淹没**。图层名、字段名、地理处理参数、错误码，都会挤占规划所需的空间；
+2. **规划逻辑与具体软件绑定**。换一个 GIS 平台（QGIS、PostGIS、GeoServer），上层都要改。
 
-验证到的实际效果：给它一句「算一下公路 500 米缓冲带」，它会**先检查坐标系**，发现数据是 WGS84 地理坐标系（单位是度），
-主动先投影到 `CGCS2000 3 度带` 再做缓冲——这正是这个项目想证明的东西：不是把命令转发出去，而是能做判断。
+所以按职责切开：**Super-Agent 决定「做什么」，Worker 决定「在 GIS 里怎么做成」。**
+本仓库是后者，一个只负责 GIS 执行的 Worker Agent。
+
+### 上下两层怎么分工
+
+| 职责 | Super-Agent | 本仓库（GIS Worker） |
+|---|---|---|
+| 理解用户意图、拆解任务 | ✅ | ❌ 只接单个子任务 |
+| 跨领域编排（GIS / 文档 / 检索…） | ✅ | ❌ |
+| 选择工具与参数 | 只给约束 | ✅ 自行决定 |
+| 判断坐标系、投影、许可级别等前置条件 | ❌ | ✅ |
+| 处理工程被独占锁定之类的运行时异常 | ❌ | ✅ |
+| 汇总并校验结果 | ✅ | ✅ 返回结构化结果与失败原因 |
+
+**接口约定**：输入是一个子任务描述加上必要上下文（工程路径、目标图层、约束条件）；
+输出是结构化结果（要素数、字段、坐标系、输出路径）或明确的失败原因。
+传输走 MCP stdio（JSON-RPC），Super-Agent 把它当成一组可调用的工具。
+
+### 实际表现
+
+给 Worker 一句「算一下公路 500 米缓冲带」，它会**先检查坐标系**，发现数据是 WGS84 地理坐标系（单位是度），
+主动先投影到 `CGCS2000 3 度带` 再做缓冲，最后溶解并出图。
+
+这一步不做，ArcGIS 会把「500 米」按 0.0000045 度去算，结果完全错误。
+**Worker 的职责就是不让这种错误流回到 Super-Agent。**
 
 ---
 
 ## 架构
 
 ```mermaid
-flowchart LR
-    U["用户自然语言"] --> A["DeepSeek / LLM Agent"]
-    A -->|"MCP (stdio)"| S["server.mjs<br/>Node 协议层<br/>16 个工具"]
-    S -->|"JSON Lines<br/>stdin / stdout"| W["arcpy_worker.py<br/>常驻子进程"]
+flowchart TB
+    subgraph WA["ArcGIS Pro Worker Agent（本仓库）"]
+        S["server.mjs<br/>Node 协议层 · 16 个工具"]
+        W["arcpy_worker.py<br/>常驻子进程"]
+        S -->|"JSON Lines<br/>stdin / stdout"| W
+    end
+
+    U["用户需求"] --> SA["GIS Super-Agent<br/>意图理解 · 任务分解 · 多 Worker 编排"]
+    SA -->|"子任务 + 上下文"| S
     W -->|"arcpy.mp / arcpy.ddd"| P["ArcGIS Pro<br/>解释器 + 许可"]
     P --> D[("aprx / gdb / 栅格")]
+    W -.->|"结构化结果 / 失败原因"| SA
 ```
 
-**为什么是两段式，而不是一个 Python 进程？**
+Worker 内部又分成两段，原因和上层分工无关，是环境逼出来的：
 
-因为 ArcGIS Pro 3.1 自带的是 **Python 3.9**，而 MCP 官方 SDK 所有版本都要求 **>= 3.10**，
-`pip install mcp` 会被直接拒绝，这条路走不通。
+ArcGIS Pro 3.1 自带的是 **Python 3.9**，而 MCP 官方 SDK 所有版本都要求 **>= 3.10**，
+`pip install mcp` 会被直接拒绝。所以 Node 承担协议层（Node 18+ 无版本问题），
+Python 只负责执行 `arcpy`，两者用一行一个 JSON 的管道通信。
 
-所以拆成两层：Node 负责协议（Node 18+ 无版本问题），Python 只负责执行 `arcpy`，
-两者用一行一个 JSON 的管道通信。**这是被环境逼出来的设计，不是过度设计。**
+**这是被环境约束逼出来的设计，不是过度设计。**
 
 ---
 
-## 功能清单
+## 能力面（暴露给 Super-Agent 的 16 个工具）
 
-共 **16 个工具**，按用途分五组。
+共 **16 个工具**，按用途分五组。这就是 Worker 对上层开放的全部能力——
+Super-Agent 只需要知道「有哪些工具、各要什么参数」，不需要知道 `arcpy` 怎么用、
+更不需要知道坐标系该怎么处理。
 
 ### 环境与工程
 
@@ -159,7 +192,10 @@ node doctor.mjs
 
 失败时会指出断在哪一层，对照 `docs/TROUBLESHOOTING.md` 处理。
 
-**4. 配置 MCP 客户端**
+**4. 把 Worker 注册到 Super-Agent 侧**
+
+Worker 自己不是客户端，它由上层 Super-Agent 以 MCP 客户端身份拉起（stdio 子进程）。
+在 Super-Agent 的 MCP 配置里加上这一段即可。
 
 通用格式参考 `config/mcp-config.example.json`，DeepSeek Harness 参考 `config/deepseek-harness.example.yml`。
 
@@ -191,13 +227,13 @@ node doctor.mjs
 
 ## 演示截图
 
-### 公路 500 米缓冲区（由 Agent 自主完成）
+### 公路 500 米缓冲区（Worker 独立执行）
 
 ![公路500米缓冲分析](docs/screenshots/buffer-500m.png)
 
-这张图是 Agent 独立走完整个流程产出的，中间没有任何手动干预：
+这张图是 Worker 接到一个子任务后独立走完整个流程产出的，中间没有任何手动干预：
 
-| 步骤 | Agent 的决策 | 调用工具 |
+| 步骤 | Worker 的判断 | 调用工具 |
 |---|---|---|
 | 1 | 先看图层清单，确认数据在哪 | `pro_list_layers` |
 | 2 | 检查坐标系，发现是 WGS84（单位：度） | `pro_describe` |
@@ -206,7 +242,7 @@ node doctor.mjs
 | 5 | 导出成图 | `pro_export_map` |
 
 第 3 步是重点：如果不投影，ArcGIS 会把「500 米」当成 0.0000045 度去算，结果完全错误。
-Agent 自己发现了这一点。
+Worker 自己发现了这一点。
 
 ---
 
@@ -231,7 +267,7 @@ Node 跑协议、Python 跑 arcpy。原因见上文：Pro 自带的 Python 3.9 �
 
 `arcpy.mp.ArcGISProject("CURRENT")` 只在 Pro 进程内部有效，外部进程拿不到。
 而且 **Pro 打开工程时会独占锁定 `.aprx`，此时外部写入会失败**（`OSError`）。
-实践建议：只在 Pro 关闭工程时让 Agent 写入；只读类操作（查询、统计、临时分析）不受影响。
+实践建议：只在 Pro 关闭工程时让 Worker 写入；只读类操作（查询、统计、临时分析）不受影响。
 
 **5. 无法精确控制出图范围**
 
@@ -247,6 +283,11 @@ Node 跑协议、Python 跑 arcpy。原因见上文：Pro 自带的 Python 3.9 �
 
 只在 **Windows + ArcGIS Pro 3.1 + ArcInfo 许可** 上完整跑通过。
 其他版本、Standard/Basic 许可下的工具可用性未逐一验证。
+
+**8. 一次只处理一个子任务**
+
+底层是单进程 stdio 管道，请求串行执行。Super-Agent 若拆出多个 GIS 子任务，需要自己控制下发顺序；
+长任务（如 `Buffer3D` 处理 234 条线要 7 分钟）会阻塞后续请求。
 
 ---
 
@@ -289,7 +330,11 @@ arcgis-pro-mcp-demo/
 
 ## 说明
 
-本项目为个人能力验证 Demo，用于 AI Builder 岗位的作品展示。
+本项目是 GIS 方向 Super-Agent 系统中的 **Worker Agent 层**，只承担 GIS 执行职责：
+把子任务翻译成 `arcpy` 调用、处理领域前置条件、返回结构化结果。
+
+**不包含** Super-Agent 侧的任务规划、意图理解与多 Worker 调度代码——那部分不属于本仓库。
+
 代码以「跑通链路、验证可行性」为目标，未做生产级加固（无测试覆盖、无错误重试策略、无并发处理）。
 
 示例数据为公开的 OpenStreetMap 道路与水系，以及公开 DEM，不含任何敏感信息。

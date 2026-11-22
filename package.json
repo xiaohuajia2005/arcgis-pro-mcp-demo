@@ -1,7 +1,7 @@
 {
   "name": "arcgis-pro-mcp-demo",
   "version": "1.0.0",
-  "description": "Local MCP server that lets an LLM agent (DeepSeek) drive ArcGIS Pro through arcpy: read layers, run spatial queries and basic GIS analysis.",
+  "description": "GIS Worker Agent for a Super-Agent system: receives GIS sub-tasks and drives ArcGIS Pro through arcpy via MCP — read layers, run spatial analysis, export maps.",
   "type": "module",
   "main": "server.mjs",
   "scripts": {
@@ -17,7 +17,9 @@
     "arcgis-pro",
     "arcpy",
     "gis",
-    "llm-agent"
+    "llm-agent",
+    "super-agent",
+    "worker-agent"
   ],
   "license": "MIT",
   "dependencies": {
